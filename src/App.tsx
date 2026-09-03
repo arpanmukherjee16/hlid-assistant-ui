@@ -943,7 +943,14 @@ function App() {
             Welcome at HLID Assistant
           </h1>
 
-         </div>
+          <div className="app-subtitle">
+            SSF - Tata Steel Netherlands
+          </div>
+
+          <div className="app-watermark">
+            Designed &amp; Developed by Arpan Mukherjee
+          </div>
+        </div>
 
         <div className="header-actions">
           <button
@@ -1000,8 +1007,7 @@ function App() {
 
           {messages.map(
             (
-              message,
-              index
+              message
             ) => (
 
               <div
