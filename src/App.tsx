@@ -903,12 +903,7 @@ function App() {
         return;
       }
 
-      const originalMessage =
-        messages.find(
-          (message) =>
-            message.id ===
-            editingMessageId
-        );
+      
 
       /*
        * Normally the original message has
