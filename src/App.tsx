@@ -63,8 +63,14 @@ function App() {
   const [isLoading, setIsLoading] =
     useState(false);
 
-  const [editingMessageId, setEditingMessageId] =
+  const [editingResponseId, setEditingResponseId] =
     useState<string | null>(null);
+
+  const [editingResponseText, setEditingResponseText] =
+    useState("");
+
+  const [showInstructions, setShowInstructions] =
+    useState(false);
 
   /*
    * Automatically scroll to the latest
@@ -478,18 +484,6 @@ function App() {
         prompt.trim();
 
       /*
-       * Determine whether this is an
-       * edited request or a brand-new
-       * request.
-       */
-      if (editingMessageId) {
-        await handleSubmitEditedPrompt(
-          userPrompt
-        );
-        return;
-      }
-
-      /*
        * Files currently attached to the
        * composer belong to this new
        * user message.
@@ -555,10 +549,6 @@ function App() {
       setPrompt("");
 
       clearComposerFiles();
-
-      setEditingMessageId(
-        null
-      );
 
       setIsLoading(true);
 
@@ -754,279 +744,53 @@ function App() {
   };
 
   /*
-   * Edit a previous USER request.
-   *
-   * The original files are restored into
-   * the composer so the user can modify
-   * the request and submit it again.
+   * Edit the generated ASSISTANT response
+   * before downloading it.
    */
-  const handleEdit = (
-    messageId: string
+  const handleEditResponse = (
+    message: StoredConversationMessage
   ) => {
-    const message =
-      messages.find(
-        (item) =>
-          item.id ===
-          messageId
-      );
-
-    if (
-      !message ||
-      message.role !==
-        "user"
-    ) {
-      return;
-    }
-
-    setPrompt(
-      message.content
-    );
-
-    /*
-     * Restore original uploaded files.
-     */
-    const originalFiles =
-      getFilesForMessage(
-        message
-      );
-
-    setProcessedFiles(
-      originalFiles
-    );
-
-    /*
-     * The browser File objects aren't
-     * available anymore after the original
-     * selection event, so create lightweight
-     * File objects from the retained Base64.
-     */
-    const reconstructedBrowserFiles =
-      originalFiles.map(
-        (file) => {
-          try {
-            const binaryString =
-              window.atob(
-                file.base64
-              );
-
-            const bytes =
-              new Uint8Array(
-                binaryString.length
-              );
-
-            for (
-              let index = 0;
-              index <
-              binaryString.length;
-              index++
-            ) {
-              bytes[index] =
-                binaryString.charCodeAt(
-                  index
-                );
-            }
-
-            return new File(
-              [bytes],
-              file.name,
-              {
-                type:
-                  file.contentType,
-              }
-            );
-          } catch {
-            return new File(
-              [],
-              file.name,
-              {
-                type:
-                  file.contentType,
-              }
-            );
-          }
-        }
-      );
-
-    setSelectedFiles(
-      reconstructedBrowserFiles
-    );
-
-    setEditingMessageId(
-      messageId
-    );
-
-    /*
-     * Remove the edited request and
-     * everything after it from the visible
-     * conversation.
-     */
-    setMessages(
-      (previousMessages) => {
-        const index =
-          previousMessages.findIndex(
-            (item) =>
-              item.id ===
-              messageId
-          );
-
-        if (index === -1) {
-          return previousMessages;
-        }
-
-        return previousMessages.slice(
-          0,
-          index
-        );
-      }
-    );
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    setEditingResponseId(message.id);
+    setEditingResponseText(message.content);
   };
 
   /*
-   * Submit an edited request.
-   *
-   * The edited request gets a new user
-   * message and a new assistant response.
+   * Save the edited assistant response.
    */
-  const handleSubmitEditedPrompt =
-    async (
-      editedPrompt: string
-    ) => {
-      if (
-        !editingMessageId ||
-        isLoading
-      ) {
-        return;
-      }
+  const handleSaveResponseEdit = (
+    messageId: string
+  ) => {
+    if (!editingResponseText.trim()) {
+      alert("The response cannot be empty.");
+      return;
+    }
 
-      
+    setMessages(
+      (previousMessages) =>
+        previousMessages.map(
+          (message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  content:
+                    editingResponseText,
+                }
+              : message
+        )
+    );
 
-      /*
-       * Normally the original message has
-       * already been removed from messages
-       * by handleEdit().
-       *
-       * Therefore we use the currently
-       * restored composer files.
-       */
-      const filesForRequest =
-        [...processedFiles];
+    setEditingResponseId(null);
+    setEditingResponseText("");
+  };
 
-      const editedUserMessage:
-        StoredConversationMessage = {
-        id: createMessageId(),
-
-        role: "user",
-
-        content:
-          editedPrompt,
-
-        files:
-          filesForRequest.length >
-          0
-            ? getConversationFiles(
-                filesForRequest
-              )
-            : [],
-
-        processedFiles:
-          filesForRequest,
-      };
-
-      /*
-       * The current messages represent
-       * everything before the edited request.
-       */
-      const conversationWithEditedMessage =
-        [
-          ...messages,
-          editedUserMessage,
-        ];
-
-      setMessages(
-        conversationWithEditedMessage
-      );
-
-      setPrompt("");
-
-      clearComposerFiles();
-
-      setEditingMessageId(
-        null
-      );
-
-      setIsLoading(true);
-
-      try {
-        const payload:
-          LogicAppPayload = {
-          prompt:
-            editedPrompt,
-
-          files:
-            filesForRequest,
-
-          conversation:
-            getPublicConversation(
-              conversationWithEditedMessage
-            ),
-        };
-
-        const finalResponse =
-          await callLogicApp(
-            payload
-          );
-
-        const assistantMessage:
-          StoredConversationMessage = {
-          id: createMessageId(),
-
-          role: "assistant",
-
-          content:
-            finalResponse ||
-            "No response was returned by the Logic App.",
-        };
-
-        setMessages(
-          (previousMessages) => [
-            ...previousMessages,
-            assistantMessage,
-          ]
-        );
-      } catch (error) {
-        console.error(
-          "Edited request failed:",
-          error
-        );
-
-        const errorMessage:
-          StoredConversationMessage = {
-          id: createMessageId(),
-
-          role: "assistant",
-
-          content:
-            error instanceof
-            Error
-              ? error.message
-              : "Unable to process the edited request.",
-        };
-
-        setMessages(
-          (previousMessages) => [
-            ...previousMessages,
-            errorMessage,
-          ]
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  /*
+   * Cancel response editing without
+   * changing the generated response.
+   */
+  const handleCancelResponseEdit = () => {
+    setEditingResponseId(null);
+    setEditingResponseText("");
+  };
 
   /*
    * Download an individual assistant
@@ -1144,26 +908,6 @@ function App() {
   };
 
   /*
-   * Cancel editing.
-   */
-  const handleCancelEdit = () => {
-    setPrompt("");
-
-    setProcessedFiles([]);
-
-    setSelectedFiles([]);
-
-    setEditingMessageId(
-      null
-    );
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value =
-        "";
-    }
-  };
-
-  /*
    * Start a completely new chat.
    */
   const handleStartNewChat = () => {
@@ -1171,7 +915,9 @@ function App() {
     setPrompt("");
     setProcessedFiles([]);
     setSelectedFiles([]);
-    setEditingMessageId(null);
+    setEditingResponseId(null);
+    setEditingResponseText("");
+    setShowInstructions(false);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -1197,24 +943,31 @@ function App() {
             Welcome at HLID Assistant
           </h1>
 
-          <div className="app-subtitle">
-            SSF - Tata Steel Netherlands
-          </div>
+         </div>
 
-          <div className="app-watermark">
-            Designed &amp; Developed by Arpan Mukherjee
-          </div>
+        <div className="header-actions">
+          <button
+            type="button"
+            className="info-button"
+            onClick={() =>
+              setShowInstructions(true)
+            }
+            title="How HLID Assistant generates responses"
+            aria-label="How HLID Assistant generates responses"
+          >
+            i
+          </button>
+
+          <button
+            type="button"
+            className="new-chat-button"
+            onClick={handleStartNewChat}
+            disabled={isLoading}
+            title="Start a new chat"
+          >
+            + Start New Chat
+          </button>
         </div>
-
-        <button
-          type="button"
-          className="new-chat-button"
-          onClick={handleStartNewChat}
-          disabled={isLoading}
-          title="Start a new chat"
-        >
-          + Start New Chat
-        </button>
 
       </header>
 
@@ -1326,11 +1079,35 @@ function App() {
                       MESSAGE CONTENT
                       ====================================== */}
 
-                  <div className="message-content">
-                    {
-                      message.content
-                    }
-                  </div>
+                  {message.role ===
+                    "assistant" &&
+                    editingResponseId ===
+                      message.id ? (
+
+                    <textarea
+                      className="response-edit-box"
+                      value={
+                        editingResponseText
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setEditingResponseText(
+                          event.target.value
+                        )
+                      }
+                      aria-label="Edit generated response"
+                    />
+
+                  ) : (
+
+                    <div className="message-content">
+                      {
+                        message.content
+                      }
+                    </div>
+
+                  )}
 
 
                   {/* ======================================
@@ -1342,65 +1119,94 @@ function App() {
 
                     <div className="assistant-actions">
 
-                      <button
-                        type="button"
-                        className="message-action-button"
-                        onClick={() =>
-                          void handleRegenerate(
-                            message.id
-                          )
-                        }
-                        disabled={
-                          isLoading
-                        }
-                        title="Regenerate response"
-                      >
-                        ↻ Regenerate
-                      </button>
+                      {editingResponseId ===
+                        message.id ? (
 
+                        <>
+                          <button
+                            type="button"
+                            className="message-action-button response-save-button"
+                            onClick={() =>
+                              handleSaveResponseEdit(
+                                message.id
+                              )
+                            }
+                            disabled={
+                              isLoading
+                            }
+                            title="Save edited response"
+                          >
+                            ✓ Save Changes
+                          </button>
 
-                      <button
-                        type="button"
-                        className="message-action-button"
-                        onClick={() =>
-                          handleEdit(
-                            messages[
-                              index -
-                                1
-                            ]?.id
-                          )
-                        }
-                        disabled={
-                          isLoading ||
-                          index ===
-                            0 ||
-                          messages[
-                            index -
-                              1
-                          ]?.role !==
-                            "user"
-                        }
-                        title="Edit user prompt"
-                      >
-                        ✎ Edit
-                      </button>
+                          <button
+                            type="button"
+                            className="message-action-button"
+                            onClick={
+                              handleCancelResponseEdit
+                            }
+                            disabled={
+                              isLoading
+                            }
+                            title="Cancel response editing"
+                          >
+                            ✕ Cancel
+                          </button>
+                        </>
 
+                      ) : (
 
-                      <button
-                        type="button"
-                        className="message-action-button"
-                        onClick={() =>
-                          void handleDownloadDocx(
-                            message
-                          )
-                        }
-                        disabled={
-                          isLoading
-                        }
-                        title="Download response as Word document"
-                      >
-                        ↓ Download
-                      </button>
+                        <>
+                          <button
+                            type="button"
+                            className="message-action-button"
+                            onClick={() =>
+                              void handleRegenerate(
+                                message.id
+                              )
+                            }
+                            disabled={
+                              isLoading
+                            }
+                            title="Regenerate response"
+                          >
+                            ↻ Regenerate
+                          </button>
+
+                          <button
+                            type="button"
+                            className="message-action-button"
+                            onClick={() =>
+                              handleEditResponse(
+                                message
+                              )
+                            }
+                            disabled={
+                              isLoading
+                            }
+                            title="Edit generated response before downloading"
+                          >
+                            ✎ Edit Response
+                          </button>
+
+                          <button
+                            type="button"
+                            className="message-action-button"
+                            onClick={() =>
+                              void handleDownloadDocx(
+                                message
+                              )
+                            }
+                            disabled={
+                              isLoading
+                            }
+                            title="Download response as Word document"
+                          >
+                            ↓ Download
+                          </button>
+                        </>
+
+                      )}
 
                     </div>
 
@@ -1454,36 +1260,147 @@ function App() {
 
 
       {/* =================================================
+          INSTRUCTIONS MODAL
+          ================================================= */}
+
+      {showInstructions && (
+        <div
+          className="instructions-overlay"
+          onClick={() =>
+            setShowInstructions(false)
+          }
+        >
+          <div
+            className="instructions-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="instructions-title"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            <div className="instructions-header">
+              <div>
+                <h2 id="instructions-title">
+                  How HLID Assistant Generates Responses
+                </h2>
+                <p>
+                  The response style is determined primarily by your request,
+                  while the supplied document content is used as the factual source.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="instructions-close-button"
+                onClick={() =>
+                  setShowInstructions(false)
+                }
+                aria-label="Close instructions"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="instructions-content">
+
+              <section>
+                <h3>1. Direct question or normal request</h3>
+                <p>
+                  If you ask a direct question, the assistant answers that
+                  question directly and proportionately. It does not automatically
+                  turn the answer into a full HLID section.
+                </p>
+              </section>
+
+              <section>
+                <h3>2. Pasted document-like content</h3>
+                <p>
+                  If you paste meeting minutes, an email, requirements, or other
+                  business/technical source content into the prompt, the supplied
+                  content is treated as the source. When you ask to generate or
+                  summarize content, the assistant rewrites the substantive
+                  information as professional HLID-ready content.
+                </p>
+              </section>
+
+              <section>
+                <h3>3. Uploaded documents or images</h3>
+                <p>
+                  Uploaded documents and images are analyzed for their business
+                  and technical content. The information obtained from the current
+                  request is treated as the authoritative source for facts from
+                  those files.
+                </p>
+              </section>
+
+              <section>
+                <h3>4. Generate, rewrite, or summarize</h3>
+                <p>
+                  When you ask to generate, rewrite, prepare, or summarize
+                  content, the assistant writes the actual business or technical
+                  content rather than describing what the source contains.
+                  The result is intended to be directly reusable in HLID.
+                  When enough substantive information is available, generated
+                  content normally contains at least three meaningful paragraphs
+                  or clearly separated content blocks.
+                </p>
+              </section>
+
+              <section>
+                <h3>5. Meeting minutes and action items</h3>
+                <p>
+                  Meeting minutes are treated as source material, not as a
+                  template for the final answer. Decisions, requirements,
+                  technical behaviour, workflows, and agreed implementation
+                  details are retained. Action items, owners, responsibilities,
+                  pending items, and next steps are not automatically included
+                  unless you explicitly ask for them.
+                </p>
+              </section>
+
+              <section>
+                <h3>6. Terminology and factual accuracy</h3>
+                <p>
+                  Important names, numbers, system names, message names,
+                  interfaces, workflows, business rules, and technical details
+                  are preserved wherever possible. The assistant does not invent
+                  or silently fill missing information with unsupported facts.
+                </p>
+              </section>
+
+              <section>
+                <h3>7. Multiple uploaded files</h3>
+                <p>
+                  When multiple files are supplied, their relevant analyzed
+                  information is considered together and consolidated into one
+                  response unless you explicitly ask for a document-by-document
+                  comparison.
+                </p>
+              </section>
+
+              <section>
+                <h3>8. HLID writing style</h3>
+                <p>
+                  Generated documentation uses professional paragraphs as the
+                  primary format. Meaningful headings or sub-headings are used
+                  when they improve readability. Generic headings, unnecessary
+                  bullet lists, meeting-report formats, and meta-document wording
+                  are avoided.
+                </p>
+              </section>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================
           COMPOSER
           ================================================= */}
 
       <footer className="composer-area">
-
-
-        {/* ================================================
-            EDITING BANNER
-            ================================================ */}
-
-        {editingMessageId && (
-
-          <div className="editing-banner">
-
-            <span>
-              Editing previous request
-            </span>
-
-            <button
-              type="button"
-              onClick={
-                handleCancelEdit
-              }
-            >
-              Cancel
-            </button>
-
-          </div>
-
-        )}
 
 
         {/* ================================================
